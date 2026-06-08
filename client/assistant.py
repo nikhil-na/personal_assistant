@@ -3,7 +3,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_ollama import ChatOllama
 from dotenv import load_dotenv
 from agent import create_agent_graph
-
+from langchain_core.messages import HumanMessage
 
 async def assistant():
 
@@ -37,7 +37,7 @@ async def assistant():
         
         # Set up a clean, blank initial state memory for this specific turn
         initial_state = {
-            "messages": [("user", user_input)],
+            "messages": [HumanMessage(content=user_input)],
             "intent": None,
             "recipient_name": None,
             "recipient_email": None,
