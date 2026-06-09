@@ -136,8 +136,11 @@ def create_agent_graph(tools: list):
     
     async def human_approval_node(state: EmailAgentState):
         """Asks for Human Approval before sending the email"""
-        user_choice = input("Send it? (yes/no): ").strip().lower()
-        return {"is_approved": user_choice}
+
+        user_choice = interrupt(
+            f"Here is your draft: {state["email_draft"]}. Send it? (yes/no): "
+        )
+        return {"is_approved": user_choice.strip().lower()}
     
     async def send_email_node(state: EmailAgentState):
         """Executes the final email tool call to send the drafted email"""

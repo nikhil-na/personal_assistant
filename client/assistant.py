@@ -1,4 +1,5 @@
 import os
+import uuid
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_ollama import ChatOllama
 from dotenv import load_dotenv
@@ -11,8 +12,6 @@ async def assistant():
     load_dotenv()
 
     server_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../server/mock_server.py"))
-
-    llm = ChatOllama(model="llama3.2", temperature=0.8)
 
     config = {
         "PersonalAssistant": {
@@ -29,16 +28,17 @@ async def assistant():
     tools = await client.get_tools()
 
     app = create_agent_graph(tools)
-    thread_id = 0  # increment per conversation turn
+
+
+    # generate once when the terminal starts
+    session_id = str(uuid.uuid4())
+    run_config = {"configurable": {"thread_id": str(session_id)}}
 
     while True:
         user_input = input("User: ").strip()
         if user_input.lower() in ["exit", "quit"]:
             print("Exiting assistant.")
             break
-
-        thread_id += 1
-        run_config = {"configurable": {"thread_id": str(thread_id)}}
         
         # Set up a clean, blank initial state memory for this specific turn
         initial_state = {
