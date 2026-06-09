@@ -80,7 +80,6 @@ def create_agent_graph(tools: list):
         name = state["recipient_name"]
         email = state["recipient_email"]
         if fetch_tool:
-            # TODO: Also filter out via email address.
             result = await fetch_tool.ainvoke({"name": name})
             print(result)
             return {}
@@ -98,7 +97,7 @@ def create_agent_graph(tools: list):
         print(lookup_result)
 
         if isinstance(lookup_result, dict) and lookup_result.get("email"):
-            return {"recipient_email": lookup_result["email"]}
+            return {state["recipient_email"]: lookup_result["email"]}
 
         # No email found — interrupt and ask the user
         # LangGraph will pause here and resume with the user's reply as the return value
@@ -106,6 +105,7 @@ def create_agent_graph(tools: list):
             f"I couldn't find an email address for {recipient_name}. "
             f"Please provide their email address:"
         )
+        return {state["recipient_email"]: user_provided_email}
 
     async def draft_node(state: EmailAgentState):
         """Drafts or rewrites the email."""

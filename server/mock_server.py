@@ -4,6 +4,7 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 import os
 from utils import MOCK_EMAILS, MOCK_GMAIL_CONTACTS
+from typing import Optional
 
 mcp = FastMCP("PersonalAssistant")
 
@@ -14,13 +15,33 @@ ENV_SERVER = os.getenv("SMTP_SERVER")
 ENV_PORT = os.getenv("SMTP_PORT")
 
 @mcp.tool()
-def fetch_emails(name: str):
-    """Fetches all the unread email when provided with recipient's name or email address."""
-    look_up = name.lower().strip()
-    for email in MOCK_EMAILS:
-        if look_up == email["name"].lower() or look_up == email["email"].lower():
-            return email
-    return {"error": f"No emails found for '{name}'."}
+@mcp.tool()
+def fetch_emails(name: Optional[str], email: Optional[str]) -> dict:
+    """Fetches unread emails when provided with a recipient's name or email address."""
+    
+    if not name and not email:
+        return {"error": "Please provide either a name or an email address to search."}
+
+    lookup_name = name.lower().strip() if name else None
+    lookup_email = email.lower().strip() if email else None
+
+    matched_emails = []
+    for item in MOCK_EMAILS:
+        item_name = item.get("name", "").lower()
+        item_email = item.get("email", "").lower()
+
+        name_match = lookup_name and lookup_name == item_name
+        email_match = lookup_email and lookup_email == item_email
+
+        if name_match or email_match:
+            matched_emails.append(item)
+
+    if not matched_emails:
+        return {"error": f"No emails found matching Name: '{name}' or Email: '{email}'."}
+
+    return {
+        "emails": matched_emails
+    }
 
 @mcp.tool()
 def search_gmail_contacts(name: str, email: str = None):
