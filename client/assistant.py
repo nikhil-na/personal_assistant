@@ -4,6 +4,7 @@ from langchain_ollama import ChatOllama
 from dotenv import load_dotenv
 from agent import create_agent_graph
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 
 async def assistant():
 
@@ -28,12 +29,16 @@ async def assistant():
     tools = await client.get_tools()
 
     app = create_agent_graph(tools)
+    thread_id = 0  # increment per conversation turn
 
     while True:
         user_input = input("User: ").strip()
         if user_input.lower() in ["exit", "quit"]:
             print("Exiting assistant.")
             break
+
+        thread_id += 1
+        run_config = {"configurable": {"thread_id": str(thread_id)}}
         
         # Set up a clean, blank initial state memory for this specific turn
         initial_state = {
@@ -45,9 +50,23 @@ async def assistant():
             "is_approved": None
         }
 
-        response = await app.ainvoke(initial_state)
+        # First invocation
+        response = await app.ainvoke(initial_state, config=run_config)
 
-        print(response)
+        # Handle interrupts in a loop (there could be multiple)
+        while response.get("__interrupt__"):
+            interrupt_payload = response["__interrupt__"][0]
+            
+            # Show the question to the user
+            user_reply = input(f"Assistant: {interrupt_payload.value}\nYou: ").strip()
+
+            # Resume the graph with the user's answer
+            response = await app.ainvoke(
+                Command(resume=user_reply),
+                config=run_config  # same thread_id so it picks up where it left off
+            )
+
+        print(f"Assistant: {response}")
 
 
 

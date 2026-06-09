@@ -1,19 +1,19 @@
 import operator
-
+import re
 
 from typing import TypedDict, Literal
-from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.messages import AnyMessage
 from typing_extensions import Annotated, Optional
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import interrupt
+from langgraph.checkpoint.memory import MemorySaver
 
 # Define the state structure for the email agent
 class EmailAgentState(TypedDict):
     intent: Optional[str]
-    recipient_name: Optional[str] # Missing info to look up
+    recipient_name: Optional[str]
     recipient_email: Optional[str] 
     email_draft: Optional[str]
     is_approved: Optional[str]
@@ -29,6 +29,9 @@ class IntentExtractor(TypedDict):
 def create_agent_graph(tools: list):
     llm = ChatOllama(model="llama3.2", temperature=0.2)
 
+    #Map tools by name so our nodes can find and execute them easily
+    tools_by_names = {t.name: t for t in tools}
+
     # NODES
     async def classifier_node(state: EmailAgentState):
         """Processes the user input and identifies what they want to do(search for emails or write an email)"""
@@ -39,15 +42,15 @@ def create_agent_graph(tools: list):
         system_prompt = SystemMessage(
             content=(
                 "You are a precise routing and intent classification assistant for an email management system.\n"
-                "Your sole task is to analyze the user's latest input and extract intent behind the user input.\n"
-                "CRITICAL INTENT RULES:\n"
-                "1. 'fetch_email_node' -> User wants to read, check, find, view, or look up emails from a specific person/address.\n"
-                "2. 'contact_node'   -> User wants to write, send, compose, or draft a new email.\n"
-                "3. 'unknown'       -> Greetings, casual chat, or unrelated requests.\n\n"
-                "EXTRACTION RULES:\n"
-                "- If a person's name is mentioned (e.g., 'John', 'Sarah'), extract it into 'recipient_name'. Do not guess an email for them.\n"
-                "- If an explicit email address is provided (e.g., 'test@example.com'), extract it into 'recipient_email.\n"
-                "- If no name or email is mentioned, leave those fields as null.\n"
+                "Analyze the user's latest input and extract the core intent, recipient name, and explicit email.\n\n"
+                "INTENT RULES:\n"
+                "- 'read_email'  -> User wants to read, check, find, view, or look up emails.\n"
+                "- 'write_email' -> User wants to write, send, compose, or draft a new email.\n"
+                "- 'None'        -> Greetings, casual chat, or unrelated requests.\n\n"
+                "CRITICAL EXTRACTION RULES:\n"
+                "1. Extract a person's name (like 'nikhil') into 'recipient_name'.\n"
+                "2. For 'recipient_email': ONLY extract a value if the user explicitly typed an email address containing an '@' symbol in their message. If they did not type a full email address, you MUST set 'recipient_email' to null.\n"
+                "3. DO NOT invent, guess, or placeholder any email address. Never output an email address that wasn't literally provided by the user."
             )
         )
 
@@ -56,40 +59,54 @@ def create_agent_graph(tools: list):
         )
 
         structured_response = await structured_llm.ainvoke([system_prompt, human_prompt])
-        # print(structured_response)
+        print(structured_response["intent"])
+        print(structured_response["recipient_name"])
+        print(structured_response["recipient_email"])
+
         return {
             "intent": structured_response["intent"],
             "recipient_name": structured_response["recipient_name"],
             "recipient_email": structured_response["recipient_email"],
 
             # I DON'T KNOW IF THIS IS THE STANDARD PRACTICE. WHAT I DID WAS SIMPLY WROTE A SIMPLE HUMAN LANGUAGE MESSAGE AND APPENDED TO THE MESSAGE HISTORY WITH AIMESSAGE(). WHAT MIGHT BE DONE? AFTER WE GET THE INTENT, THEN SIMPLY MAKE A CONDITIONAL NODE HERE AND GOTO NODES AS PER REQUIRED. FOLLOW: https://docs.langchain.com/oss/python/langgraph/thinking-in-langgraph#step-1-map-out-your-workflow-as-discrete-steps:~:text=if%20classification%5B%27intent%27%5D 
-            "messages": [AIMessage(content=(f"System: Verified action as{structured_response["intent"]}"))]
+
+            # "messages": []
         }
 
     async def fetch_email_node(state: EmailAgentState):
-        """Fetches all the emails from the provided email address or name"""
+        """Fetches all the emails from the provided name via IMAP tool."""
 
-        # Mocking the emails we "found"
-        mock_emails = (
-            "Found 2 unread emails:\n\n"
-            "1. From: Bob (bob@gmail.com)\n"
-            "   Subject: Project Update\n"
-            "   Body: Hey, just wanted to check if the design draft is ready for review?\n\n"
-            "2. From: Bob (bob@gmail.com)\n"
-            "   Subject: Lunch Tomorrow\n"
-            "   Body: Are we still on for tacos at 1 PM?"
-        )
-        return {
-            # Appends these mock emails cleanly into your AnyMessage history array
-            "messages": [AIMessage(content=mock_emails)]}
-    
+        fetch_tool = tools_by_names.get("fetch_emails")
+        name = state["recipient_name"]
+        email = state["recipient_email"]
+        if fetch_tool:
+            # TODO: Also filter out via email address.
+            result = await fetch_tool.ainvoke({"name": name})
+            print(result)
+            return {}
+        return {"error": "no fetch email node tool found"}
+
     async def contact_node(state: EmailAgentState):
-        """Resolves missing email addresses. Only runs ONCE."""
-        if state["recipient_name"] and not state["recipient_email"]:
-            # TODO: Search for email address based on the name
-            return {"recipient_email": "pratyush@example.com"}
-        return {}
-    
+        """Resolves missing email addresses and requests one if lookup fails."""
+        search_tool = tools_by_names.get("search_gmail_contacts")
+
+        recipient_name = state.get("recipient_name")
+        if not recipient_name:
+            return {}
+
+        lookup_result = await search_tool.ainvoke({"name": recipient_name})
+        print(lookup_result)
+
+        if isinstance(lookup_result, dict) and lookup_result.get("email"):
+            return {"recipient_email": lookup_result["email"]}
+
+        # No email found — interrupt and ask the user
+        # LangGraph will pause here and resume with the user's reply as the return value
+        user_provided_email = interrupt(
+            f"I couldn't find an email address for {recipient_name}. "
+            f"Please provide their email address:"
+        )
+
     async def draft_node(state: EmailAgentState):
         """Drafts or rewrites the email."""
 
@@ -109,7 +126,7 @@ def create_agent_graph(tools: list):
 
         response = await llm.ainvoke([system_prompt, human_prompt])
 
-        print(response)
+        print(f"response from draft: {response}")
         generated_content_parsed= response.content.strip()
 
         return {
@@ -132,7 +149,9 @@ def create_agent_graph(tools: list):
         """Decides where to go based on the classifier's output."""
         if state["intent"] == "read_email":
             return "fetch_email_node"
-        return "contact_node"
+        elif state["intent"] == "write_email":
+            return "contact_node"
+        return END
 
     # SECOND CONDITIONAL NODE
     async def route_after_approval(state: EmailAgentState) -> Literal["send_email_node", "draft_node"]:
@@ -163,4 +182,4 @@ def create_agent_graph(tools: list):
     workflow.add_conditional_edges("human_approval", route_after_approval, ["draft_node", "send_email_node", END])
     workflow.add_edge("send_email_node", END)
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=MemorySaver())
