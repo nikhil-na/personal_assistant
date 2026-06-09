@@ -80,7 +80,7 @@ def create_agent_graph(tools: list):
         name = state["recipient_name"]
         email = state["recipient_email"]
         if fetch_tool:
-            result = await fetch_tool.ainvoke({"name": name})
+            result = await fetch_tool.ainvoke({"name": name, "email": email})
             print(result)
             return {}
         return {"error": "no fetch email node tool found"}
