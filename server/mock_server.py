@@ -3,10 +3,16 @@ import smtplib
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 import os
-from utils import MOCK_EMAILS, MOCK_GMAIL_CONTACTS
+import json
 from typing import Optional
 
 mcp = FastMCP("PersonalAssistant")
+
+with open(os.path.join(os.path.dirname(__file__), "utils.json"), "r") as f:
+    data = json.load(f)
+
+MOCK_EMAILS = data["mock_emails"]
+MOCK_GMAIL_CONTACTS = data["mock_gmail_contacts"]
 
 load_dotenv()
 ENV_EMAIL = os.getenv("EMAIL_ADDRESS")
@@ -14,7 +20,7 @@ ENV_PASS = os.getenv("EMAIL_PASSWORD")
 ENV_SERVER = os.getenv("SMTP_SERVER")
 ENV_PORT = os.getenv("SMTP_PORT")
 
-@mcp.tool()
+
 @mcp.tool()
 def fetch_emails(name: Optional[str], email: Optional[str]) -> dict:
     """Fetches unread emails when provided with a recipient's name or email address."""
@@ -55,14 +61,19 @@ def search_gmail_contacts(name: str, email: str = None):
     for contact in MOCK_GMAIL_CONTACTS:
         if look_up in contact["name"].lower():
             return {"name": contact["name"], "email": contact["email"]}
-
-    # if email:
-    #     new_contact = {"name": name.strip(), "email": email.strip()}
-    #     MOCK_GMAIL_CONTACTS.append(new_contact)
-    #     print(f"Added contact: {new_contact['name']} ({new_contact['email']})")
-    #     return {}
-
     return {"error": "Contact not found. Please provide an email address to add this contact."}
+
+@mcp.tool()
+def add_email_database(name:str, email:str):
+    new_contact = {"name": name.strip(), "email": email.strip()}
+    MOCK_GMAIL_CONTACTS.append(new_contact)
+    print(f"Added contact: {new_contact['name']} ({new_contact['email']})")
+    # write back to json so it persists
+    data["mock_gmail_contacts"] = MOCK_GMAIL_CONTACTS
+    with open(os.path.join(os.path.dirname(__file__), "utils.json"), "w") as f:
+        json.dump(data, f, indent=4)
+    
+    return {"success": f"Added {name} ({email}) to contacts."}
 
 @mcp.tool()
 def send_email(recipient: str, body: str):
@@ -82,7 +93,7 @@ def send_email(recipient: str, body: str):
         server.login(ENV_EMAIL, ENV_PASS)
         server.sendmail(ENV_EMAIL, recipient, message.as_string())
 
-    return f"[Success]: Email sent to {recipient}'."
+    return {"status": f"success to {recipient}"}
 
 @mcp.tool()
 def add(a: int, b: int):
