@@ -26,7 +26,7 @@ class IntentExtractor(TypedDict):
     recipient_email: Optional[str] 
 
 # CREATING GRAPH OVERLAY
-def create_agent_graph(tools: list):
+def create_agent_graph(tools: list, use_checkpointer: bool = True):
     llm = ChatOllama(model="llama3.2", temperature=0.2)
 
     #Map tools by name so our nodes can find and execute them easily
@@ -60,9 +60,10 @@ def create_agent_graph(tools: list):
 
         structured_response = await structured_llm.ainvoke([system_prompt, human_prompt])
 
+        print(structured_response)
+
         raw_email = structured_response.get("recipient_email")
         cleaned_email = raw_email if (raw_email and "@" in raw_email) else None
-
 
         print(f"email: {cleaned_email}")
         print(structured_response["recipient_name"])
@@ -209,4 +210,9 @@ def create_agent_graph(tools: list):
     workflow.add_conditional_edges("human_approval", route_after_approval, ["draft_node", "send_email_node", END])
     workflow.add_edge("send_email_node", END)
 
-    return workflow.compile(checkpointer=MemorySaver())
+    if use_checkpointer:
+        return workflow.compile(checkpointer=MemorySaver())
+    else:
+        return workflow.compile()  # langgraph dev provides its own
+
+agent = create_agent_graph(tools=[], use_checkpointer=False)

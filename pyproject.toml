@@ -14,7 +14,9 @@ dependencies = [
     "langchain-google-genai>=4.2.4",
     "langchain-mcp-adapters>=0.2.2",
     "langchain-ollama>=1.1.0",
+    "langgraph-cli[inmem]>=0.4.28",
     "mcp>=1.27.2",
     "mcp-use>=1.7.0",
     "python-dotenv>=1.2.2",
+    "u>=4.0",
 ]

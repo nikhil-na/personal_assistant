@@ -50,7 +50,7 @@ def fetch_emails(name: Optional[str], email: Optional[str]) -> dict:
     }
 
 @mcp.tool()
-def search_gmail_contacts(name: str, email: str = None):
+def search_gmail_contacts(name: str):
     """
     Searches for a contact in the user's Gmail contacts by name.
     Always use this tool when the user provides a name instead of providing an email address, or when they ask to find a contact.
