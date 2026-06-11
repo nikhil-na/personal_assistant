@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from agent import create_agent_graph
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
+from langchain_core.output_parsers import StrOutputParser
 
 async def assistant():
 
@@ -28,6 +29,8 @@ async def assistant():
     tools = await client.get_tools()
 
     app = create_agent_graph(tools)
+
+    parser = StrOutputParser()
 
 
     # generate once when the terminal starts
@@ -65,8 +68,7 @@ async def assistant():
                 Command(resume=user_reply),
                 config=run_config  # same thread_id so it picks up where it left off
             )
-
-        print(f"Assistant: {response}")
-
-
-
+        # result = await parser.ainvoke(response)
+        result = response["messages"][-1]
+        print(result.content)
+        # print(f"Assistant: {result.content}")

@@ -1,5 +1,6 @@
 import operator
 import re
+import json
 
 from typing import TypedDict, Literal
 from langchain_core.messages import AnyMessage
@@ -16,6 +17,7 @@ class EmailAgentState(TypedDict):
     recipient_name: Optional[str]
     recipient_email: Optional[str] 
     email_draft: Optional[str]
+    email_subject: Optional[str]
     is_approved: Optional[str]
 
     messages: Annotated[list[AnyMessage], operator.add]
@@ -60,13 +62,8 @@ def create_agent_graph(tools: list, use_checkpointer: bool = True):
 
         structured_response = await structured_llm.ainvoke([system_prompt, human_prompt])
 
-        print(structured_response)
-
         raw_email = structured_response.get("recipient_email")
         cleaned_email = raw_email if (raw_email and "@" in raw_email) else None
-
-        print(f"email: {cleaned_email}")
-        print(structured_response["recipient_name"])
 
         return {
             "intent": structured_response["intent"],
@@ -86,28 +83,32 @@ def create_agent_graph(tools: list, use_checkpointer: bool = True):
         email = state["recipient_email"]
         if fetch_tool:
             result = await fetch_tool.ainvoke({"name": name, "email": email})
-            return {
-                "messages": [AIMessage(content=result)]
-            }
+            parsed_data = json.loads(result[0]["text"])
+            result = " \n".join(parsed_data["emails"][0]["content"])
+            print(result)
+
         return {"error": "no fetch email node tool found"}
 
     async def contact_node(state: EmailAgentState):
         """Resolves missing email addresses and requests one if lookup fails."""
-        if not (state["recipient_email"]):
+        print(state["recipient_email"])
+        print(not state["recipient_email"])
+        if (state["recipient_email"] == None):
             search_tool = tools_by_names.get("search_gmail_contacts")
 
             recipient_name = state.get("recipient_name")
             if not recipient_name:
                 return {}
+            print("=== Inside Contact Node ===")
+            print(recipient_name)
 
             lookup_result = await search_tool.ainvoke({"name": recipient_name})
 
-            if isinstance(lookup_result, dict) and lookup_result.get("email"):
-                found_email = lookup_result["email"]
-                print("===from contact node===")
-                print(f"DEBUG: found email = {found_email}")
-                print(f"DEBUG: returning = {{'recipient_email': {found_email}}}")
-                return {"recipient_email": found_email}
+            for result in range(len(lookup_result)):
+                if isinstance(lookup_result[result], dict):
+                    data = json.loads(lookup_result[result]["text"])
+                    found_email = data["email"]
+                    return {"recipient_email": found_email}
 
             # No email found — interrupt and ask the user
             # LangGraph will pause here and resume with the user's reply as the return value
@@ -124,13 +125,10 @@ def create_agent_graph(tools: list, use_checkpointer: bool = True):
 
     async def draft_node(state: EmailAgentState):
         """Drafts or rewrites the email."""
-        print(f"DEBUG draft_node state: recipient_email={state.get('recipient_email')}, recipient_name={state.get('recipient_name')}")
-
-
         user_message = state["messages"]
         recipient_name = state.get("recipient_name", "unknown")
         
-        system_prompt = SystemMessage(
+        system_prompt_body = SystemMessage(
             content=(
                 "You are an expert AI email assistant. Draft a concise, professional email body "
                 f"addressed to '{recipient_name}' based strictly on the user's instructions. "
@@ -138,23 +136,37 @@ def create_agent_graph(tools: list, use_checkpointer: bool = True):
                 "The name of the sender should be Nikhil Aryal."
             )
         )
-        human_prompt = HumanMessage(
+        human_prompt_body = HumanMessage(
             content=(f"User instruction: {user_message}")
         )
 
-        response = await llm.ainvoke([system_prompt, human_prompt])
-        generated_content_parsed= response.content.strip()
+        response_body = await llm.ainvoke([system_prompt_body, human_prompt_body])
 
+        response_subject = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You are an expert copywriter specializing in corporate and personal communication. "
+                        "Your sole task is to generate a concise, high-impact, and contextually accurate "
+                        "subject line based on the provided email draft. Return only the subject line, nothing else.\n\n"
+                    )
+                ),
+                HumanMessage(
+                    content=f"{response_body.content.strip()}"
+                )
+            ]
+        )
         return {
-            "messages": [response],
-            "email_draft": generated_content_parsed,
+            "messages": [response_body, response_subject],
+            "email_draft": response_body.content.strip(),
+            "email_subject": response_subject.content.strip()
         }
     
     async def human_approval_node(state: EmailAgentState):
         """Asks for Human Approval before sending the email"""
 
         user_choice = interrupt(
-            f"Here is your draft: {state["email_draft"]}.\n\n Send it? (yes/no): "
+            f"Here is your draft:\n\n {state["email_subject"]}\n\n{state["email_draft"]}.\n\n Send it? (yes/no): "
         )
         return {"is_approved": user_choice.strip().lower()}
     
@@ -165,21 +177,36 @@ def create_agent_graph(tools: list, use_checkpointer: bool = True):
 
         recipient_email = state["recipient_email"]
         recipient_name = state["recipient_name"]
+        email_subject = state["email_subject"]
         email_body = state["email_draft"]
 
-        await send_email_tool.ainvoke({"recipient": recipient_email, "body": email_body})
+        await send_email_tool.ainvoke({"recipient": recipient_email, "body": email_body, "subject": email_subject})
         
         return {}
 
+    async def chat_node(state: EmailAgentState):
+        """Handles general conversation — greetings, questions, casual chat."""
+        final_prompt = [
+            SystemMessage(
+                content=(
+                    "You are a helpful personal assistant. "
+                    "Respond naturally to the user's message."
+                )
+            )
+        ] + state["messages"]
     
+        response = await llm.ainvoke(final_prompt)
+
+        return {"messages": [response]}
+
     # FIRST CONDITIONAL NODE
-    async def route_after_classifer(state: EmailAgentState) -> Literal["fetch_email_node", "contact_node"]:
+    async def route_after_classifer(state: EmailAgentState) -> Literal["fetch_email_node", "contact_node", "chat_node"]:
         """Decides where to go based on the classifier's output."""
         if state["intent"] == "read_email":
             return "fetch_email_node"
         elif state["intent"] == "write_email":
             return "contact_node"
-        return END
+        return "chat_node"
 
     # SECOND CONDITIONAL NODE
     async def route_after_approval(state: EmailAgentState) -> Literal["send_email_node", "draft_node"]:
@@ -199,9 +226,10 @@ def create_agent_graph(tools: list, use_checkpointer: bool = True):
     workflow.add_node("draft_node", draft_node)
     workflow.add_node("human_approval", human_approval_node)
     workflow.add_node("send_email_node", send_email_node)
+    workflow.add_node("chat_node", chat_node)
 
     workflow.add_edge(START, "classifier")
-    workflow.add_conditional_edges("classifier", route_after_classifer, ["fetch_email_node", "contact_node", END])
+    workflow.add_conditional_edges("classifier", route_after_classifer, ["fetch_email_node", "contact_node", "chat_node"])
     workflow.add_edge("fetch_email_node", END)
 
     workflow.add_edge("contact_node", "draft_node")

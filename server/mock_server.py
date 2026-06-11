@@ -76,14 +76,14 @@ def add_email_database(name:str, email:str):
     return {"success": f"Added {name} ({email}) to contacts."}
 
 @mcp.tool()
-def send_email(recipient: str, body: str):
+def send_email(recipient: str, subject: str, body: str):
     """
     Sends an email to the specified recipient with the given subject and body.
     Use this tool immediately after creating a draft email if the user confirms they want to send it.
     """
     # Create the email
     message = MIMEText(body, "plain")
-    message["Subject"] = "Message from AI Assistant"
+    message["Subject"] = subject
     message["From"] = ENV_EMAIL
     message["To"] = recipient
 
